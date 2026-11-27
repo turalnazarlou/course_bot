@@ -1,46 +1,55 @@
-import asyncio
 
-from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart, Command
-from aiogram.types import Message
+import os
+import hmac
+
+from fastapi import FastAPI, Request, HTTPException
+from aiogram import Bot
+from aiogram.types import Update
+
+from config import BOT_TOKEN
+from bot import dp
 
 
-from config import BOT_TOKEN, ADMIN_IDS
+app = FastAPI()
 
-dp = Dispatcher()
+bot = Bot(token=BOT_TOKEN)
+
+WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 
 
-@dp.message(CommandStart())
-async def start_command(message: Message):
-    await message.answer(
-        "Welcome to our Academy!\n\n"
-        "Use /courses to explore our courses."
+@app.get("/")
+async def home():
+    return {
+        "message": "Course Bot is running!"
+    }
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+
+    # Verify Telegram webhook secret
+    received_secret = request.headers.get(
+        "X-Telegram-Bot-Api-Secret-Token", ""
     )
 
-@dp.message(Command("courses"))
-async def courses_command(message: Message):
-    await message.answer(
-        "Our courses will appear here soon!"
+    if not hmac.compare_digest(
+        received_secret,
+        WEBHOOK_SECRET
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden"
+        )
+
+    # Read Telegram update
+    data = await request.json()
+
+    update = Update.model_validate(
+        data,
+        context={"bot": bot}
     )
 
-@dp.message(Command("admin"))
-async def admin_command(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("You are not authrized.")
-        return
-    await message.answer(
-        "Welcome to the Admin Panel!"
-    )
+    # Process Telegram update
+    await dp.feed_update(bot, update)
 
-async def main():
-    bot = Bot(token=BOT_TOKEN)
-
-    print("Bot is starting...")
-
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    return {"ok": True}
